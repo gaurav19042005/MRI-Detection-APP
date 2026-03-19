@@ -106,6 +106,7 @@ if st.sidebar.button("📁 Show History"):
 def load_model():
 
     model_path = "model.tflite"
+    url = "https://github.com/gaurav19042005/MRI-Detection-APP/blob/main/model.tflite"
 
     if not os.path.exists(model_path):
         with st.spinner("Downloading AI Model from GitHub..."):
