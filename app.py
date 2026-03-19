@@ -106,9 +106,9 @@ if st.sidebar.button("📁 Show History"):
 @st.cache_resource
 def load_model():
 
-    file_id = "1GkWBUGZdxdS0nxKfvwfzyntRW0Pczq3K"
-    model_path = "model.h5"
-    url = f"https://drive.google.com/uc?id={file_id}"
+    file_id = "16hk8pwHU82cSnWCNzVh6bOEGEUGLO2le"
+    model_path = "model.keras"
+    url = f"https://drive.google.com/file/d/16hk8pwHU82cSnWCNzVh6bOEGEUGLO2le/view?usp=drive_link"
 
     if not os.path.exists(model_path):
         with st.spinner("Downloading AI Model..."):
