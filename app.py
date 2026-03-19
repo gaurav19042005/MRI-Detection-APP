@@ -106,8 +106,8 @@ if st.sidebar.button("📁 Show History"):
 @st.cache_resource
 def load_model():
 
-    file_id = "16hk8pwHU82cSnWCNzVh6bOEGEUGLO2le"
-    model_path = "model.keras"
+    file_id = "1bJGRFbvLEp7KF3OA7GimJi7QdkNA3F0Q"
+    model_path = "model1.keras"
     url = f"https://drive.google.com/uc?id={file_id}"
 
     # Remove old corrupted file
