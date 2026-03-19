@@ -105,7 +105,6 @@ if st.sidebar.button("📁 Show History"):
 @st.cache_resource
 def load_model():
 
-    url = "https://github.com/gaurav19042005/MRI-Detection-APP/blob/main/model.tflite"  # 🔥 PUT YOUR LINK HERE
     model_path = "model.tflite"
 
     if not os.path.exists(model_path):
