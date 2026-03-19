@@ -1,5 +1,6 @@
 import streamlit as st
 import tensorflow as tf
+from tensorflow import keras
 import numpy as np
 from PIL import Image
 import os
@@ -8,6 +9,10 @@ import sqlite3
 from datetime import datetime
 import gdown
 
+# ==============================
+# FIX FOR TENSORFLOW WARNINGS
+# ==============================
+os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
 
 # ==============================
 # PAGE CONFIG
@@ -18,9 +23,8 @@ st.set_page_config(
     layout="wide"
 )
 
-
 # ==============================
-# CUSTOM CSS
+# CUSTOM CSS (Hospital UI)
 # ==============================
 st.markdown("""
 <style>
@@ -36,24 +40,21 @@ st.markdown("""
 </style>
 """, unsafe_allow_html=True)
 
-
 # ==============================
 # HEADER
 # ==============================
 st.markdown('<div class="title">🏥 MRI Brain Tumor Detection Dashboard</div>', unsafe_allow_html=True)
-st.markdown('<div class="subtitle">CNN + Database + Streamlit Cloud Ready</div>', unsafe_allow_html=True)
+st.markdown('<div class="subtitle">AI Powered Diagnosis System</div>', unsafe_allow_html=True)
 st.write("---")
 
-
 # ==============================
-# DATABASE (CLOUD SAFE)
+# DATABASE (Cloud Safe)
 # ==============================
 DB_PATH = "/tmp/mri_reports.db"
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-
     c.execute("""
     CREATE TABLE IF NOT EXISTS reports (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -62,25 +63,20 @@ def init_db():
         confidence REAL
     )
     """)
-
     conn.commit()
     conn.close()
 
 init_db()
 
-
 def save_to_db(label, confidence):
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
-
     c.execute("""
     INSERT INTO reports (date, tumor_type, confidence)
     VALUES (?, ?, ?)
     """, (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), label, confidence))
-
     conn.commit()
     conn.close()
-
 
 def load_reports():
     conn = sqlite3.connect(DB_PATH)
@@ -88,14 +84,13 @@ def load_reports():
     conn.close()
     return df
 
-
 # ==============================
 # SIDEBAR
 # ==============================
 st.sidebar.title("⚙️ Dashboard")
 
 st.sidebar.info("""
-This AI system classifies MRI scans into:
+Tumor Classes:
 - Glioma
 - Meningioma
 - Pituitary
@@ -103,48 +98,41 @@ This AI system classifies MRI scans into:
 """)
 
 if st.sidebar.button("📁 Show History"):
-    df = load_reports()
-    st.sidebar.dataframe(df)
-
+    st.sidebar.dataframe(load_reports())
 
 # ==============================
-# LOAD MODEL (GOOGLE DRIVE)
+# LOAD MODEL (FIXED)
 # ==============================
 @st.cache_resource
 def load_model():
 
-    models = {
-        "final": "1GkWBUGZdxdS0nxKfvwfzyntRW0Pczq3K",
-        "best": "1SRTSP1vtZ7DBBDdcDF5ZNR-7dRigFqI6"
-    }
+    file_id = "1GkWBUGZdxdS0nxKfvwfzyntRW0Pczq3K"
+    model_path = "model.h5"
+    url = f"https://drive.google.com/uc?id={file_id}"
 
-    for name, file_id in models.items():
+    if not os.path.exists(model_path):
+        with st.spinner("Downloading AI Model..."):
+            gdown.download(url, model_path, quiet=False)
 
-        model_path = f"{name}.h5"
-        url = f"https://drive.google.com/uc?id={file_id}"
-
-        if not os.path.exists(model_path):
-            with st.spinner(f"Downloading {name} model..."):
-                gdown.download(url, model_path, quiet=False)
-
-        if os.path.exists(model_path):
-            return tf.keras.models.load_model(model_path)
-
-    return None
-
+    try:
+        return keras.models.load_model(
+            model_path,
+            compile=False,
+            safe_mode=False  # 🔥 FIX FOR YOUR ERROR
+        )
+    except Exception as e:
+        st.error(f"Model Load Failed: {e}")
+        return None
 
 model = load_model()
 
 if model is None:
-    st.error("❌ Model not found!")
     st.stop()
-
 
 # ==============================
 # CLASS LABELS
 # ==============================
 CLASS_NAMES = ['glioma', 'meningioma', 'notumor', 'pituitary']
-
 
 # ==============================
 # PREPROCESS IMAGE
@@ -154,9 +142,8 @@ def preprocess_image(image):
     img_array = np.array(img) / 255.0
     return np.expand_dims(img_array, axis=0)
 
-
 # ==============================
-# PREDICTION FUNCTION
+# PREDICTION
 # ==============================
 def predict(image):
     img_array = preprocess_image(image)
@@ -168,34 +155,29 @@ def predict(image):
 
     return label, confidence, preds
 
-
 # ==============================
-# GENERATE REPORT
+# REPORT GENERATION
 # ==============================
 def generate_report(label, confidence):
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-
     return f"""
-MRI TUMOR DETECTION REPORT
--------------------------
-Date: {now}
+MRI REPORT
+----------
+Date: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 
 Prediction: {label.upper()}
 Confidence: {confidence:.2f}
 
-⚠️ This result is AI-generated and not a medical diagnosis.
+⚠️ Not a medical diagnosis
 """
-
 
 # ==============================
 # FILE UPLOAD
 # ==============================
 st.markdown("### 📤 Upload MRI Image")
-uploaded_file = st.file_uploader("Choose MRI Image", type=["jpg", "png", "jpeg"])
-
+uploaded_file = st.file_uploader("Upload Image", type=["jpg", "png", "jpeg"])
 
 # ==============================
-# MAIN LOGIC
+# MAIN
 # ==============================
 if uploaded_file:
 
@@ -203,75 +185,50 @@ if uploaded_file:
 
     col1, col2 = st.columns(2)
 
-    # LEFT PANEL
     with col1:
-        st.markdown("### 🧾 Original MRI")
-        st.image(image, use_column_width=True)
+        st.image(image, caption="MRI Scan", use_column_width=True)
 
-    # PREDICT
     label, confidence, preds = predict(image)
-
-    # SAVE TO DATABASE
     save_to_db(label, confidence)
 
-    # RIGHT PANEL
     with col2:
-        st.markdown("### 🧠 AI Diagnosis")
-
         st.markdown('<div class="card">', unsafe_allow_html=True)
 
-        st.markdown(f"### 🧪 Tumor Type: {label.upper()}")
-        st.markdown(f"### 📊 Confidence: {confidence:.2f}")
+        st.markdown(f"### 🧠 {label.upper()}")
+        st.markdown(f"Confidence: {confidence:.2f}")
 
         st.progress(int(confidence * 100))
 
         if label == "notumor":
-            st.success("✅ No Tumor Detected")
+            st.success("No Tumor Detected")
         else:
-            st.error(f"⚠️ {label.upper()} Tumor Detected")
+            st.error("Tumor Detected")
 
         st.markdown('</div>', unsafe_allow_html=True)
 
-    # ==============================
-    # PROBABILITY CHART
-    # ==============================
-    st.markdown("### 📊 Class Probabilities")
-
-    prob_dict = {
-        CLASS_NAMES[i]: float(preds[0][i])
-        for i in range(len(CLASS_NAMES))
-    }
-
+    # Chart
+    st.markdown("### 📊 Probabilities")
+    prob_dict = {CLASS_NAMES[i]: float(preds[0][i]) for i in range(4)}
     st.bar_chart(prob_dict)
 
-    # ==============================
-    # TABLE VIEW
-    # ==============================
-    st.markdown("### 📋 Prediction Details")
-
+    # Table
+    st.markdown("### 📋 Details")
     df = pd.DataFrame({
-        "Tumor Type": CLASS_NAMES,
+        "Class": CLASS_NAMES,
         "Probability": preds[0]
     })
-
     st.dataframe(df)
 
-    # ==============================
-    # DOWNLOAD REPORT
-    # ==============================
-    report_text = generate_report(label, confidence)
-
+    # Download
     st.download_button(
-        label="📄 Download Report",
-        data=report_text,
-        file_name="mri_report.txt",
-        mime="text/plain"
+        "📄 Download Report",
+        generate_report(label, confidence),
+        "report.txt"
     )
-
 
 # ==============================
 # FOOTER
 # ==============================
 st.write("---")
-st.warning("⚠️ This system is for educational purposes only. Consult a doctor for medical advice.")
-st.markdown("🧠 AI Medical Dashboard | CNN + SQLite + Streamlit Cloud")
+st.warning("⚠️ Educational use only")
+st.markdown("🧠 AI Medical Dashboard")
