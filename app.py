@@ -1,13 +1,12 @@
 import streamlit as st
 import tensorflow as tf
-from tensorflow import keras
 import numpy as np
 from PIL import Image
 import os
 import pandas as pd
 import sqlite3
 from datetime import datetime
-import gdown
+import requests
 
 # ==============================
 # FIX FOR TENSORFLOW WARNINGS
@@ -24,7 +23,7 @@ st.set_page_config(
 )
 
 # ==============================
-# CUSTOM CSS (Hospital UI)
+# CUSTOM CSS
 # ==============================
 st.markdown("""
 <style>
@@ -48,7 +47,7 @@ st.markdown('<div class="subtitle">AI Powered Diagnosis System</div>', unsafe_al
 st.write("---")
 
 # ==============================
-# DATABASE (Cloud Safe)
+# DATABASE
 # ==============================
 DB_PATH = "/tmp/mri_reports.db"
 
@@ -101,28 +100,26 @@ if st.sidebar.button("📁 Show History"):
     st.sidebar.dataframe(load_reports())
 
 # ==============================
-# LOAD MODEL (FIXED)
+# LOAD TFLITE MODEL FROM GITHUB
 # ==============================
 @st.cache_resource
 def load_model():
 
-    file_id = "1bJGRFbvLEp7KF3OA7GimJi7QdkNA3F0Q"
-    model_path = "model1.keras"
-    url = f"https://drive.google.com/uc?id={file_id}"
+    url = "https://github.com/gaurav19042005/MRI-Detection-APP/blob/main/model.tflite"  # 🔥 PUT YOUR LINK HERE
+    model_path = "model.tflite"
 
-    # 🔥 FORCE DELETE OLD FILE
-    if os.path.exists(model_path):
-        os.remove(model_path)
+    if not os.path.exists(model_path):
+        with st.spinner("Downloading AI Model from GitHub..."):
+            r = requests.get(url)
+            with open(model_path, "wb") as f:
+                f.write(r.content)
 
-    with st.spinner("Downloading AI Model..."):
-        gdown.download(url, model_path, quiet=False)
+    interpreter = tf.lite.Interpreter(model_path=model_path)
+    interpreter.allocate_tensors()
 
-    return keras.models.load_model(model_path)
-        
+    return interpreter
+
 model = load_model()
-
-if model is None:
-    st.stop()
 
 # ==============================
 # CLASS LABELS
@@ -138,11 +135,18 @@ def preprocess_image(image):
     return np.expand_dims(img_array, axis=0)
 
 # ==============================
-# PREDICTION
+# PREDICTION (TFLITE)
 # ==============================
 def predict(image):
-    img_array = preprocess_image(image)
-    preds = model.predict(img_array)
+    img_array = preprocess_image(image).astype(np.float32)
+
+    input_details = model.get_input_details()
+    output_details = model.get_output_details()
+
+    model.set_tensor(input_details[0]['index'], img_array)
+    model.invoke()
+
+    preds = model.get_tensor(output_details[0]['index'])
 
     index = np.argmax(preds)
     label = CLASS_NAMES[index]
@@ -151,7 +155,7 @@ def predict(image):
     return label, confidence, preds
 
 # ==============================
-# REPORT GENERATION
+# REPORT
 # ==============================
 def generate_report(label, confidence):
     return f"""
