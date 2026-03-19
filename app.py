@@ -110,23 +110,14 @@ def load_model():
     model_path = "model1.keras"
     url = f"https://drive.google.com/uc?id={file_id}"
 
-    # Remove old corrupted file
+    # 🔥 FORCE DELETE OLD FILE
     if os.path.exists(model_path):
         os.remove(model_path)
 
     with st.spinner("Downloading AI Model..."):
-        gdown.download(url, model_path, quiet=False, fuzzy=True)
+        gdown.download(url, model_path, quiet=False)
 
-    # Check if download is valid
-    if os.path.getsize(model_path) < 10000000:
-        st.error("❌ Model download failed (corrupted file)")
-        return None
-
-    try:
-        return keras.models.load_model(model_path, compile=False)
-    except Exception as e:
-        st.error(f"Model Load Failed: {e}")
-        return None
+    return keras.models.load_model(model_path)
         
 model = load_model()
 
