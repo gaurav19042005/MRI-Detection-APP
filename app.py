@@ -1,17 +1,14 @@
+import os
+os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
+
 import streamlit as st
 import tensorflow as tf
 import numpy as np
 from PIL import Image
-import os
 import pandas as pd
 import sqlite3
 from datetime import datetime
 import requests
-
-# ==============================
-# FIX FOR TENSORFLOW WARNINGS
-# ==============================
-os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
 
 # ==============================
 # PAGE CONFIG
@@ -117,48 +114,58 @@ if st.sidebar.button("📁 Show History"):
         st.sidebar.warning("No history found.")
 
 # ==============================
-# LOAD TFLITE MODEL
+# LOAD MODEL
 # ==============================
 @st.cache_resource
 def load_model():
     model_path = "model.tflite"
+    model_url = "https://raw.githubusercontent.com/gaurav19042005/MRI-Detection-APP/main/model.tflite"
 
-    # Raw GitHub URL
-    url = "https://raw.githubusercontent.com/gaurav19042005/MRI-Detection-APP/main/model.tflite"
-
-    # Delete old invalid model file if exists
+    # Delete corrupted old file
     if os.path.exists(model_path):
-        file_size = os.path.getsize(model_path)
-
-        # If file is too small, probably invalid HTML file
-        if file_size < 100000:
+        try:
+            temp_interpreter = tf.lite.Interpreter(model_path=model_path)
+            temp_interpreter.allocate_tensors()
+        except:
             os.remove(model_path)
 
-    # Download model if not exists
+    # Download model if not present
     if not os.path.exists(model_path):
-        with st.spinner("Downloading AI Model from GitHub..."):
+        with st.spinner("Downloading AI model..."):
             try:
-                r = requests.get(url, timeout=30)
+                response = requests.get(model_url, timeout=60)
 
-                if r.status_code == 200:
+                if response.status_code == 200:
                     with open(model_path, "wb") as f:
-                        f.write(r.content)
+                        f.write(response.content)
                 else:
-                    st.error(f"Failed to download model. Status code: {r.status_code}")
+                    st.error(f"Failed to download model. Status code: {response.status_code}")
                     st.stop()
 
             except Exception as e:
-                st.error(f"Error downloading model: {e}")
+                st.error(f"Download error: {e}")
                 st.stop()
 
-    # Load TensorFlow Lite model
+    # Load TFLite model
     try:
-        interpreter = tf.lite.Interpreter(model_path=model_path)
+        interpreter = tf.lite.Interpreter(
+            model_path=model_path,
+            experimental_delegates=[]
+        )
         interpreter.allocate_tensors()
         return interpreter
 
     except Exception as e:
         st.error(f"Failed to load TensorFlow Lite model: {e}")
+        st.info("Please use TensorFlow 2.15.0 in requirements.txt")
+        st.code("""
+streamlit==1.33.0
+tensorflow==2.15.0
+numpy==1.26.4
+pandas==2.2.2
+Pillow==10.3.0
+requests==2.31.0
+        """)
         st.stop()
 
 model = load_model()
@@ -172,14 +179,15 @@ CLASS_NAMES = ['glioma', 'meningioma', 'notumor', 'pituitary']
 # PREPROCESS IMAGE
 # ==============================
 def preprocess_image(image):
-    img = image.resize((224, 224))
-    img = img.convert("RGB")
-    img_array = np.array(img, dtype=np.float32) / 255.0
+    image = image.convert("RGB")
+    image = image.resize((224, 224))
+    img_array = np.array(image, dtype=np.float32)
+    img_array = img_array / 255.0
     img_array = np.expand_dims(img_array, axis=0)
     return img_array
 
 # ==============================
-# PREDICTION FUNCTION
+# PREDICT FUNCTION
 # ==============================
 def predict(image):
     img_array = preprocess_image(image)
@@ -190,30 +198,42 @@ def predict(image):
     model.set_tensor(input_details[0]['index'], img_array)
     model.invoke()
 
-    preds = model.get_tensor(output_details[0]['index'])
+    prediction = model.get_tensor(output_details[0]['index'])[0]
 
-    index = np.argmax(preds[0])
-    label = CLASS_NAMES[index]
-    confidence = float(preds[0][index])
+    predicted_index = np.argmax(prediction)
+    predicted_label = CLASS_NAMES[predicted_index]
+    confidence = float(prediction[predicted_index])
 
-    return label, confidence, preds
+    return predicted_label, confidence, prediction
 
 # ==============================
 # REPORT GENERATOR
 # ==============================
 def generate_report(label, confidence):
     report = f"""
-MRI REPORT
----------------------------
+MRI BRAIN TUMOR REPORT
+========================
+
 Date: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 
-Prediction: {label.upper()}
-Confidence: {confidence:.2%}
+Predicted Tumor Type: {label.upper()}
+Confidence Score: {confidence:.2%}
 
-Note:
-This result is generated using an AI model.
-This is for educational purposes only and not a medical diagnosis.
+Conclusion:
 """
+
+    if label == "notumor":
+        report += "No tumor detected."
+    else:
+        report += f"Tumor detected: {label.upper()}"
+
+    report += """
+
+Disclaimer:
+This result is generated by an AI model and is for educational purposes only.
+Please consult a doctor for professional diagnosis.
+"""
+
     return report
 
 # ==============================
@@ -221,7 +241,7 @@ This is for educational purposes only and not a medical diagnosis.
 # ==============================
 st.markdown("### 📤 Upload MRI Image")
 uploaded_file = st.file_uploader(
-    "Upload MRI Scan Image",
+    "Choose an MRI Scan Image",
     type=["jpg", "jpeg", "png"]
 )
 
@@ -237,7 +257,7 @@ if uploaded_file is not None:
         with col1:
             st.image(image, caption="Uploaded MRI Scan", use_container_width=True)
 
-        label, confidence, preds = predict(image)
+        label, confidence, prediction = predict(image)
 
         save_to_db(label, confidence)
 
@@ -257,31 +277,31 @@ if uploaded_file is not None:
             st.markdown('</div>', unsafe_allow_html=True)
 
         # ==============================
-        # PROBABILITY CHART
+        # CHART
         # ==============================
         st.markdown("### 📊 Prediction Probabilities")
 
-        prob_df = pd.DataFrame({
-            "Class": CLASS_NAMES,
-            "Probability": preds[0]
+        probability_df = pd.DataFrame({
+            "Tumor Type": CLASS_NAMES,
+            "Probability": prediction
         })
 
-        st.bar_chart(prob_df.set_index("Class"))
+        st.bar_chart(probability_df.set_index("Tumor Type"))
 
         # ==============================
-        # DETAILS TABLE
+        # TABLE
         # ==============================
-        st.markdown("### 📋 Detailed Results")
-        st.dataframe(prob_df, use_container_width=True)
+        st.markdown("### 📋 Detailed Prediction Table")
+        st.dataframe(probability_df, use_container_width=True)
 
         # ==============================
         # DOWNLOAD REPORT
         # ==============================
-        report_text = generate_report(label, confidence)
+        report = generate_report(label, confidence)
 
         st.download_button(
             label="📄 Download Report",
-            data=report_text,
+            data=report,
             file_name="mri_report.txt",
             mime="text/plain"
         )
@@ -293,5 +313,5 @@ if uploaded_file is not None:
 # FOOTER
 # ==============================
 st.write("---")
-st.warning("⚠️ Educational use only. Not a substitute for professional medical diagnosis.")
-st.markdown("🧠 Developed with Streamlit + TensorFlow Lite")
+st.warning("⚠️ This tool is for educational use only.")
+st.markdown("Developed using Streamlit + TensorFlow Lite + SQLite")
