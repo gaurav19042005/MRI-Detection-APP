@@ -27,9 +27,18 @@ st.set_page_config(
 # ==============================
 st.markdown("""
 <style>
-.main {background-color: #f4f6f9;}
-.title {font-size: 36px; font-weight: bold; color: #1f4e79;}
-.subtitle {font-size: 18px; color: #555;}
+.main {
+    background-color: #f4f6f9;
+}
+.title {
+    font-size: 36px;
+    font-weight: bold;
+    color: #1f4e79;
+}
+.subtitle {
+    font-size: 18px;
+    color: #555;
+}
 .card {
     background: white;
     padding: 20px;
@@ -49,7 +58,7 @@ st.write("---")
 # ==============================
 # DATABASE
 # ==============================
-DB_PATH = "/tmp/mri_reports.db"
+DB_PATH = "mri_reports.db"
 
 def init_db():
     conn = sqlite3.connect(DB_PATH)
@@ -73,7 +82,11 @@ def save_to_db(label, confidence):
     c.execute("""
     INSERT INTO reports (date, tumor_type, confidence)
     VALUES (?, ?, ?)
-    """, (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), label, confidence))
+    """, (
+        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        label,
+        confidence
+    ))
     conn.commit()
     conn.close()
 
@@ -92,32 +105,61 @@ st.sidebar.info("""
 Tumor Classes:
 - Glioma
 - Meningioma
-- Pituitary
 - No Tumor
+- Pituitary
 """)
 
 if st.sidebar.button("📁 Show History"):
-    st.sidebar.dataframe(load_reports())
+    history_df = load_reports()
+    if not history_df.empty:
+        st.sidebar.dataframe(history_df)
+    else:
+        st.sidebar.warning("No history found.")
 
 # ==============================
-# LOAD TFLITE MODEL FROM GITHUB
+# LOAD TFLITE MODEL
 # ==============================
 @st.cache_resource
 def load_model():
-
     model_path = "model.tflite"
-    url = "https://github.com/gaurav19042005/MRI-Detection-APP/blob/main/model.tflite"
 
+    # Raw GitHub URL
+    url = "https://raw.githubusercontent.com/gaurav19042005/MRI-Detection-APP/main/model.tflite"
+
+    # Delete old invalid model file if exists
+    if os.path.exists(model_path):
+        file_size = os.path.getsize(model_path)
+
+        # If file is too small, probably invalid HTML file
+        if file_size < 100000:
+            os.remove(model_path)
+
+    # Download model if not exists
     if not os.path.exists(model_path):
         with st.spinner("Downloading AI Model from GitHub..."):
-            r = requests.get(url)
-            with open(model_path, "wb") as f:
-                f.write(r.content)
+            try:
+                r = requests.get(url, timeout=30)
 
-    interpreter = tf.lite.Interpreter(model_path=model_path)
-    interpreter.allocate_tensors()
+                if r.status_code == 200:
+                    with open(model_path, "wb") as f:
+                        f.write(r.content)
+                else:
+                    st.error(f"Failed to download model. Status code: {r.status_code}")
+                    st.stop()
 
-    return interpreter
+            except Exception as e:
+                st.error(f"Error downloading model: {e}")
+                st.stop()
+
+    # Load TensorFlow Lite model
+    try:
+        interpreter = tf.lite.Interpreter(model_path=model_path)
+        interpreter.allocate_tensors()
+        return interpreter
+
+    except Exception as e:
+        st.error(f"Failed to load TensorFlow Lite model: {e}")
+        st.stop()
 
 model = load_model()
 
@@ -131,14 +173,16 @@ CLASS_NAMES = ['glioma', 'meningioma', 'notumor', 'pituitary']
 # ==============================
 def preprocess_image(image):
     img = image.resize((224, 224))
-    img_array = np.array(img) / 255.0
-    return np.expand_dims(img_array, axis=0)
+    img = img.convert("RGB")
+    img_array = np.array(img, dtype=np.float32) / 255.0
+    img_array = np.expand_dims(img_array, axis=0)
+    return img_array
 
 # ==============================
-# PREDICTION (TFLITE)
+# PREDICTION FUNCTION
 # ==============================
 def predict(image):
-    img_array = preprocess_image(image).astype(np.float32)
+    img_array = preprocess_image(image)
 
     input_details = model.get_input_details()
     output_details = model.get_output_details()
@@ -148,86 +192,106 @@ def predict(image):
 
     preds = model.get_tensor(output_details[0]['index'])
 
-    index = np.argmax(preds)
+    index = np.argmax(preds[0])
     label = CLASS_NAMES[index]
-    confidence = float(np.max(preds))
+    confidence = float(preds[0][index])
 
     return label, confidence, preds
 
 # ==============================
-# REPORT
+# REPORT GENERATOR
 # ==============================
 def generate_report(label, confidence):
-    return f"""
+    report = f"""
 MRI REPORT
-----------
+---------------------------
 Date: {datetime.now().strftime("%Y-%m-%d %H:%M:%S")}
 
 Prediction: {label.upper()}
-Confidence: {confidence:.2f}
+Confidence: {confidence:.2%}
 
-⚠️ Not a medical diagnosis
+Note:
+This result is generated using an AI model.
+This is for educational purposes only and not a medical diagnosis.
 """
+    return report
 
 # ==============================
 # FILE UPLOAD
 # ==============================
 st.markdown("### 📤 Upload MRI Image")
-uploaded_file = st.file_uploader("Upload Image", type=["jpg", "png", "jpeg"])
+uploaded_file = st.file_uploader(
+    "Upload MRI Scan Image",
+    type=["jpg", "jpeg", "png"]
+)
 
 # ==============================
-# MAIN
+# MAIN CONTENT
 # ==============================
-if uploaded_file:
+if uploaded_file is not None:
+    try:
+        image = Image.open(uploaded_file)
 
-    image = Image.open(uploaded_file).convert("RGB")
+        col1, col2 = st.columns(2)
 
-    col1, col2 = st.columns(2)
+        with col1:
+            st.image(image, caption="Uploaded MRI Scan", use_container_width=True)
 
-    with col1:
-        st.image(image, caption="MRI Scan", use_column_width=True)
+        label, confidence, preds = predict(image)
 
-    label, confidence, preds = predict(image)
-    save_to_db(label, confidence)
+        save_to_db(label, confidence)
 
-    with col2:
-        st.markdown('<div class="card">', unsafe_allow_html=True)
+        with col2:
+            st.markdown('<div class="card">', unsafe_allow_html=True)
 
-        st.markdown(f"### 🧠 {label.upper()}")
-        st.markdown(f"Confidence: {confidence:.2f}")
+            st.markdown(f"## 🧠 Prediction: {label.upper()}")
+            st.markdown(f"### Confidence: {confidence:.2%}")
 
-        st.progress(int(confidence * 100))
+            st.progress(int(confidence * 100))
 
-        if label == "notumor":
-            st.success("No Tumor Detected")
-        else:
-            st.error("Tumor Detected")
+            if label == "notumor":
+                st.success("✅ No Tumor Detected")
+            else:
+                st.error(f"⚠️ Tumor Detected: {label.upper()}")
 
-        st.markdown('</div>', unsafe_allow_html=True)
+            st.markdown('</div>', unsafe_allow_html=True)
 
-    # Chart
-    st.markdown("### 📊 Probabilities")
-    prob_dict = {CLASS_NAMES[i]: float(preds[0][i]) for i in range(4)}
-    st.bar_chart(prob_dict)
+        # ==============================
+        # PROBABILITY CHART
+        # ==============================
+        st.markdown("### 📊 Prediction Probabilities")
 
-    # Table
-    st.markdown("### 📋 Details")
-    df = pd.DataFrame({
-        "Class": CLASS_NAMES,
-        "Probability": preds[0]
-    })
-    st.dataframe(df)
+        prob_df = pd.DataFrame({
+            "Class": CLASS_NAMES,
+            "Probability": preds[0]
+        })
 
-    # Download
-    st.download_button(
-        "📄 Download Report",
-        generate_report(label, confidence),
-        "report.txt"
-    )
+        st.bar_chart(prob_df.set_index("Class"))
+
+        # ==============================
+        # DETAILS TABLE
+        # ==============================
+        st.markdown("### 📋 Detailed Results")
+        st.dataframe(prob_df, use_container_width=True)
+
+        # ==============================
+        # DOWNLOAD REPORT
+        # ==============================
+        report_text = generate_report(label, confidence)
+
+        st.download_button(
+            label="📄 Download Report",
+            data=report_text,
+            file_name="mri_report.txt",
+            mime="text/plain"
+        )
+
+    except Exception as e:
+        st.error(f"Error processing image: {e}")
 
 # ==============================
 # FOOTER
 # ==============================
 st.write("---")
-st.warning("⚠️ Educational use only")
-st.markdown("🧠 AI Medical Dashboard")
+st.warning("⚠️ Educational use only. Not a substitute for professional medical diagnosis.")
+st.markdown("🧠 Developed with Streamlit + TensorFlow Lite")
